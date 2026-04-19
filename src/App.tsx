@@ -7,6 +7,7 @@ import { AssetsPage } from '@/pages/Assets'
 import { OutreachPage } from '@/pages/Outreach'
 import { InvoicesPage } from '@/pages/Invoices'
 import { LogsPage } from '@/pages/Logs'
+import { AuditsPage } from '@/pages/Audits'
 import { PrivacyPolicy, TermsConditions } from '@/pages/Legal'
 import { useBlinkAuth } from '@blinkdotnew/react'
 import { blink } from '@/lib/blink'
@@ -23,6 +24,7 @@ type PipelineView =
   | 'outreach'
   | 'invoices'
   | 'logs'
+  | 'audits'
   | 'settings'
   | 'privacy'
   | 'terms'
@@ -104,6 +106,7 @@ function App() {
       case 'outreach': return <OutreachPage />
       case 'invoices': return <InvoicesPage />
       case 'logs': return <LogsPage />
+      case 'audits': return <AuditsPage />
       case 'settings': return <SettingsPage />
       case 'privacy': return <PrivacyPolicy />
       case 'terms': return <TermsConditions />

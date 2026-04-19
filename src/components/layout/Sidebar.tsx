@@ -11,7 +11,8 @@ import {
   Settings, 
   Zap, 
   ChevronLeft, 
-  ChevronRight 
+  ChevronRight,
+  Search
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +26,7 @@ const navItems = [
   { id: 'scores', label: 'Scores', icon: BarChart3 },
   { id: 'assets', label: 'Assets', icon: Sparkles },
   { id: 'outreach', label: 'Outreach', icon: Send },
+  { id: 'audits', label: 'Audits', icon: Search },
   { id: 'invoices', label: 'Invoices', icon: Receipt },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
