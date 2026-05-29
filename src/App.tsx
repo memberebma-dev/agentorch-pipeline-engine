@@ -6,6 +6,7 @@ import { ScoresPage } from '@/pages/Scores'
 import { AssetsPage } from '@/pages/Assets'
 import { OutreachPage } from '@/pages/Outreach'
 import { InvoicesPage } from '@/pages/Invoices'
+import BillingPage from '@/pages/Billing'
 import { LogsPage } from '@/pages/Logs'
 import { AuditsPage } from '@/pages/Audits'
 import { PrivacyPolicy, TermsConditions } from '@/pages/Legal'
@@ -28,6 +29,7 @@ type PipelineView =
   | 'settings'
   | 'privacy'
   | 'terms'
+  | 'billing'
 
 function App() {
   const { isAuthenticated, isLoading } = useBlinkAuth()
@@ -108,6 +110,7 @@ function App() {
       case 'logs': return <LogsPage />
       case 'audits': return <AuditsPage />
       case 'settings': return <SettingsPage />
+      case 'billing': return <BillingPage />
       case 'privacy': return <PrivacyPolicy />
       case 'terms': return <TermsConditions />
       default: return <PipelineDashboard onNavigate={setActiveView} />

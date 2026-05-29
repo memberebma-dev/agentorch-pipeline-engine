@@ -15,6 +15,7 @@
     "lint": "bun run lint:types && bun run lint:js && bun run lint:css && bun run check:css-vars && bun run check:css-classes"
   },
   "devDependencies": {
+    "dotenv": "^17.4.2",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   },
@@ -75,11 +76,13 @@
     "react-responsive": "^10.0.1",
     "recharts": "2.15.4",
     "sonner": "^2.0.7",
+    "stripe": "^22.1.1",
     "stylelint": "^17.4.0",
     "stylelint-config-standard": "^40.0.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "3.3.5",
     "tailwindcss-animate": "^1.0.7",
+    "ts-node": "^10.9.2",
     "vaul": "^1.1.2",
     "zod": "^4.3.6"
   }

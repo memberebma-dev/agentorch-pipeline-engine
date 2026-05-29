@@ -422,4 +422,8 @@ app.all("/orchestrator", async (c) => {
   return c.json({ success: true, message: "Pipeline started" });
 });
 
+import stripeApp from './stripe';
+
+app.route("/stripe", stripeApp);
+
 export default app;

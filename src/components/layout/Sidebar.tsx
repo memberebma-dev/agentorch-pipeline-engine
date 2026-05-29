@@ -28,6 +28,7 @@ const navItems = [
   { id: 'outreach', label: 'Outreach', icon: Send },
   { id: 'audits', label: 'Audits', icon: Search },
   { id: 'invoices', label: 'Invoices', icon: Receipt },
+  { id: 'billing', label: 'Billing', icon: Zap },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
