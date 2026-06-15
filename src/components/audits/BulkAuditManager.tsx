@@ -627,10 +627,11 @@ export function BulkAuditManager({ onAuditsComplete }: BulkAuditManagerProps) {
                 {queue.map((item, index) => (
                   <div key={index} className="queue-item">
                     <span className="queue-status">{getStatusIcon(item.status)}</span>
-                <div className="queue-info">
-                <div className="queue-name">{(item.lead as any).business_name || (item.lead as any).companyName}</div>
-                <div className="queue-meta">{item.lead.website}</div>
-              </div>.status === 'running' && 'Running audit...'}
+                    <div className="queue-info">
+                      <div className="queue-name">{(item.lead as any).business_name || (item.lead as any).companyName}</div>
+                      <div className="queue-meta">{item.lead.website}</div>
+                      <div className="queue-status-text">
+                        {item.status === 'running' && 'Running audit...'}
                         {item.status === 'completed' && item.report && `Score: ${item.report.overallScore}/100`}
                         {item.status === 'failed' && item.error}
                       </div>

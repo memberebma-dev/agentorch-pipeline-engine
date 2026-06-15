@@ -12,7 +12,10 @@ import {
   Zap, 
   ChevronLeft, 
   ChevronRight,
-  Search
+  Search,
+  TrendingUp,
+  UserCheck,
+  Bell
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -22,12 +25,15 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   { id: 'leads', label: 'Leads', icon: Users },
   { id: 'scores', label: 'Scores', icon: BarChart3 },
   { id: 'assets', label: 'Assets', icon: Sparkles },
   { id: 'outreach', label: 'Outreach', icon: Send },
   { id: 'audits', label: 'Audits', icon: Search },
   { id: 'invoices', label: 'Invoices', icon: Receipt },
+  { id: 'reminders', label: 'Reminders', icon: Bell },
+  { id: 'affiliates', label: 'Affiliates', icon: UserCheck },
   { id: 'billing', label: 'Billing', icon: Zap },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },

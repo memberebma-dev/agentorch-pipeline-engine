@@ -10,6 +10,9 @@ import BillingPage from '@/pages/Billing'
 import { LogsPage } from '@/pages/Logs'
 import { AuditsPage } from '@/pages/Audits'
 import { PrivacyPolicy, TermsConditions } from '@/pages/Legal'
+import { AnalyticsPage } from '@/pages/Analytics'
+import { AffiliatesPage } from '@/pages/Affiliates'
+import { InvoiceRemindersPage } from '@/pages/InvoiceReminders'
 import { useBlinkAuth } from '@blinkdotnew/react'
 import { blink } from '@/lib/blink'
 import { Button } from '@/components/ui/button'
@@ -30,6 +33,9 @@ type PipelineView =
   | 'privacy'
   | 'terms'
   | 'billing'
+  | 'analytics'
+  | 'affiliates'
+  | 'reminders'
 
 function App() {
   const { isAuthenticated, isLoading } = useBlinkAuth()
@@ -113,6 +119,9 @@ function App() {
       case 'billing': return <BillingPage />
       case 'privacy': return <PrivacyPolicy />
       case 'terms': return <TermsConditions />
+      case 'analytics': return <AnalyticsPage />
+      case 'affiliates': return <AffiliatesPage />
+      case 'reminders': return <InvoiceRemindersPage />
       default: return <PipelineDashboard onNavigate={setActiveView} />
     }
   }

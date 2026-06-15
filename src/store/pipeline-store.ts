@@ -202,6 +202,48 @@ export function useAgentRuns() {
   })
 }
 
+export function useOutreachAnalytics() {
+  return useQuery({
+    queryKey: ['outreachAnalytics'],
+    queryFn: async () => {
+      const events = await blink.db.outreachAnalytics.list({
+        orderBy: { createdAt: 'desc' },
+        limit: 500,
+      })
+      return events as any[]
+    },
+    staleTime: 30000,
+  })
+}
+
+export function useAffiliates() {
+  return useQuery({
+    queryKey: ['affiliates'],
+    queryFn: async () => {
+      const affiliates = await blink.db.affiliates.list({
+        orderBy: { createdAt: 'desc' },
+        limit: 100,
+      })
+      return affiliates as any[]
+    },
+    staleTime: 30000,
+  })
+}
+
+export function useInvoiceReminders() {
+  return useQuery({
+    queryKey: ['invoiceReminders'],
+    queryFn: async () => {
+      const reminders = await blink.db.invoiceReminders.list({
+        orderBy: { createdAt: 'desc' },
+        limit: 200,
+      })
+      return reminders as any[]
+    },
+    staleTime: 30000,
+  })
+}
+
 const ORCHESTRATOR_URL = 'https://s5ksm5ty.backend.blink.new/orchestrator'
 
 export function useStartAgent() {
