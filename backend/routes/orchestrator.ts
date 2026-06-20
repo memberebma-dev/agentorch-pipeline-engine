@@ -1,214 +1,212 @@
 import { createClient } from "@blinkdotnew/sdk";
 import { generateAIContent } from "../lib/ai";
 import { sendEmail, buildOutreachEmail } from "../lib/email";
+import { discoverLeadsFromMaps, scoreLeadFromPresence } from "../lib/maps";
 
 export async function runOrchestration(
   env: Record<string, string>,
-  { runId, agentName, leadId }: { runId: string; agentName: string; leadId?: string }
+  body: { runId: string; agentName: string; leadId?: string; niche?: string; location?: string }
 ) {
   const blink = createClient({ projectId: env.BLINK_PROJECT_ID, secretKey: env.BLINK_SECRET_KEY });
   const openaiKey = env.OPENAI_API_KEY || "";
-  const sgKey = env.SENDGRID_API_KEY || "";
+  const resendKey = env.RESEND_API_KEY || "";
+  const mapsKey = env.GOOGLE_MAPS_API_KEY || "";
+  const { runId, agentName, leadId } = body;
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
   const updateRun = async (status: string, progress: number, logs: string) => {
-    try {
-      await blink.db.agentRuns.update(runId, {
-        status, progressPercent: progress, logsText: logs,
-        finishedAt: status === "success" || status === "failed" ? new Date().toISOString() : null,
-      });
-    } catch (e) { console.error("updateRun error:", e); }
+    try { await blink.db.agentRuns.update(runId, { status, progressPercent: progress, logsText: logs, finishedAt: status === "success" || status === "failed" ? new Date().toISOString() : null }); } catch (e) { console.error("updateRun:", e); }
   };
 
   try {
+    // ─── Lead Discovery (real Google Maps API) ────────────────────────────────
     if (agentName === "Lead Discovery") {
-      await updateRun("running", 20, "Scanning SoCal bridge lender directories...");
-      await sleep(1200);
-      const ts = Date.now();
-      for (const co of [
-        { n: "Pacific Bridge Capital", e: "deals@pacificbridgecapital.com", c: "Michael Chang", l: "Los Angeles, CA" },
-        { n: "SoCal Commercial Lending", e: "info@socalcommerciallending.com", c: "Jessica Morales", l: "San Diego, CA" },
-      ]) {
-        await blink.db.leads.create({
-          id: crypto.randomUUID(), companyName: `${co.n} ${ts}`.slice(0, 50),
-          website: `https://${co.n.toLowerCase().replace(/\s/g, "")}.com`,
-          contactEmail: co.e, contactName: co.c, source: "Google Maps",
-          niche: "Commercial Bridge Lender", location: co.l, status: "new", consentObtained: 1,
-        });
+      const niche = body.niche || "commercial bridge lender";
+      const location = body.location || "Southern California";
+      await updateRun("running", 15, `Querying Google Maps API: "${niche}" in "${location}"...`);
+      const places = await discoverLeadsFromMaps(mapsKey, niche, location, 10);
+      if (places.length === 0) { await updateRun("failed", 0, `No results from Google Maps for "${niche}" in "${location}". Check API key or broaden query.`); return; }
+      await updateRun("running", 50, `Found ${places.length} businesses. Scoring & deduplicating...`);
+      let created = 0, skipped = 0;
+      for (const place of places) {
+        const existing = await blink.db.leads.list({ where: { companyName: place.companyName }, limit: 1 }) as any[];
+        if (existing.length > 0) { skipped++; continue; }
+        const { overallScore } = scoreLeadFromPresence(place);
+        await blink.db.leads.create({ id: crypto.randomUUID(), companyName: place.companyName, website: place.website || "", phone: place.phone || "", contactEmail: "", contactName: "", source: "Google Maps API", niche, location: place.address || location, status: "new", leadScore: overallScore, consentObtained: 1 });
+        created++;
       }
-      await updateRun("success", 100, "Discovered 2 new bridge lender prospects.");
+      await updateRun("success", 100, `Google Maps: ${created} new leads added, ${skipped} duplicates skipped. Query: "${niche}" in "${location}".`);
       return;
     }
 
+    // ─── Scoring (real web presence analysis) ─────────────────────────────────
     if (agentName === "Scoring") {
-      if (!leadId) throw new Error("leadId required for scoring");
-      await updateRun("running", 40, "Analyzing digital footprint...");
-      await sleep(1200);
-      const score = 70 + Math.floor(Math.random() * 25);
-      await blink.db.leadScores.create({ id: crypto.randomUUID(), leadId, overallScore: score,
-        conversionLikelihood: 65 + Math.floor(Math.random() * 25), potentialServicesValue: 4997.0,
-        searchActivityScore: 55 + Math.floor(Math.random() * 30), paidAdsActivity: 25 + Math.floor(Math.random() * 35) });
-      await blink.db.leads.update(leadId, { status: "scored" });
-      await updateRun("success", 100, `Lead scored ${score}/100.`);
+      if (!leadId) throw new Error("leadId required");
+      await updateRun("running", 30, "Fetching lead data for real scoring...");
+      const leads = await blink.db.leads.list({ where: { id: leadId }, limit: 1 }) as any[];
+      const lead = leads[0]; if (!lead) throw new Error("Lead not found");
+      const { overallScore, conversionLikelihood, searchActivityScore, paidAdsActivity, issues } = scoreLeadFromPresence({ website: lead.website, phone: lead.phone });
+      const existing = await blink.db.leadScores.list({ where: { leadId }, limit: 1 }) as any[];
+      if (existing.length > 0) {
+        await blink.db.leadScores.update(existing[0].id, { overallScore, conversionLikelihood, searchActivityScore, paidAdsActivity, potentialServicesValue: 4997 });
+      } else {
+        await blink.db.leadScores.create({ id: crypto.randomUUID(), leadId, overallScore, conversionLikelihood, searchActivityScore, paidAdsActivity, potentialServicesValue: 4997 });
+      }
+      await blink.db.leads.update(leadId, { status: "scored", leadScore: overallScore });
+      await updateRun("success", 100, `Scored ${lead.companyName}: ${overallScore}/100. Issues: ${issues.slice(0, 2).join("; ") || "None"}.`);
       return;
     }
 
+    // ─── Asset Generation (real OpenAI) ───────────────────────────────────────
     if (agentName === "Asset Generation") {
       if (!leadId) throw new Error("leadId required");
-      await updateRun("running", 25, "Fetching lead data for AI content generation...");
       const leads = await blink.db.leads.list({ where: { id: leadId }, limit: 1 }) as any[];
-      const lead = leads[0] || { companyName: "Bridge Lender", website: "", location: "Southern California" };
-
-      await updateRun("running", 50, "Generating AI SEO audit report...");
-      const auditContent = await generateAIContent(openaiKey,
-        `Write a 3-paragraph SEO/AEO audit report for ${lead.companyName} (commercial bridge lender, ${lead.location || "Southern California"}). Include 5 critical visibility gaps and 3 quick-win recommendations. Professional tone. Under 350 words.`);
-      await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId, type: "audit_report",
-        hostedUrl: `https://agentorch.io/audit/${leadId}`, content: auditContent });
-
-      await updateRun("running", 75, "Generating custom website copy...");
-      const websiteCopy = await generateAIContent(openaiKey,
-        `Write hero copy for ${lead.companyName} commercial bridge lender website: headline (10 words), subheadline (20 words), 3 service pillars with 1-line descriptions each, and CTA text. SEO-optimized.`);
-      await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId, type: "custom_website",
-        hostedUrl: `https://preview-${leadId.slice(0, 8)}.agentorch.site`, content: websiteCopy });
-
+      const lead = leads[0]; if (!lead) throw new Error("Lead not found");
+      await updateRun("running", 40, `Generating AI audit for ${lead.companyName}...`);
+      const audit = await generateAIContent(openaiKey, `Write a detailed SEO/AEO audit report for ${lead.companyName}. Website: ${lead.website || "none"}. Location: ${lead.location || "N/A"}. Include 5 critical issues and 3 quick wins. Under 400 words.`);
+      const existing = await blink.db.generatedAssets.list({ where: { leadId, type: "audit_report" }, limit: 1 }) as any[];
+      if (existing.length > 0) { await blink.db.generatedAssets.update(existing[0].id, { content: audit }); }
+      else { await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId, type: "audit_report", hostedUrl: `https://agentorch.io/audit/${leadId}`, content: audit }); }
+      await updateRun("running", 70, "Generating custom website copy...");
+      const copy = await generateAIContent(openaiKey, `Write hero headline (10 words), subheadline (20 words), 3 service pillars, and CTA for ${lead.companyName} (${lead.niche || "local business"} in ${lead.location || "N/A"}). SEO-optimized.`);
+      const existWeb = await blink.db.generatedAssets.list({ where: { leadId, type: "custom_website" }, limit: 1 }) as any[];
+      if (existWeb.length > 0) { await blink.db.generatedAssets.update(existWeb[0].id, { content: copy }); }
+      else { await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId, type: "custom_website", hostedUrl: `https://preview-${leadId.slice(0, 8)}.agentorch.site`, content: copy }); }
       await blink.db.leads.update(leadId, { status: "audited" });
-      await updateRun("success", 100, "AI assets generated: SEO audit + custom website copy via OpenAI.");
+      await updateRun("success", 100, `AI assets generated for ${lead.companyName} via OpenAI.`);
       return;
     }
 
+    // ─── Outreach (real Resend email) ─────────────────────────────────────────
     if (agentName === "Outreach") {
       if (!leadId) throw new Error("leadId required");
-      await updateRun("running", 30, "Composing AI outreach email...");
       const leads = await blink.db.leads.list({ where: { id: leadId }, limit: 1 }) as any[];
-      const lead = leads[0] || { companyName: "Bridge Lender", contactEmail: "", contactName: "" };
-
-      const emailBody = await generateAIContent(openaiKey,
-        `Write a 4-sentence cold outreach email for ${lead.companyName} (${lead.contactName || "decision maker"}). Mention you built a custom preview website, reference SEO gaps, offer no-pressure view, end with yes/no question. Conversational.`);
-
+      const lead = leads[0]; if (!lead) throw new Error("Lead not found");
+      await updateRun("running", 40, `Composing AI outreach for ${lead.companyName}...`);
+      const emailBody = await generateAIContent(openaiKey, `Write a 4-sentence cold outreach email for ${lead.companyName} (${lead.contactName || "decision maker"}). Mention you built them a preview website, reference SEO gaps, offer no-pressure view, end with yes/no question. Conversational.`);
       const seqId = crypto.randomUUID();
-      await blink.db.outreachSequences.create({ id: seqId, leadId, step: 1, status: "sent",
-        emailSentAt: new Date().toISOString(), lastSentAt: new Date().toISOString() });
-      await blink.db.outreachAnalytics.create({ id: crypto.randomUUID(), sequenceId: seqId, leadId, step: 1,
-        eventType: "sent", metadata: JSON.stringify({ channel: "email" }) });
-
-      let emailSent = false;
-      if (lead.contactEmail && sgKey) {
-        await updateRun("running", 75, `Sending via SendGrid to ${lead.contactEmail}...`);
-        emailSent = await sendEmail(sgKey, lead.contactEmail,
-          `Custom preview site ready for ${lead.companyName}`,
-          buildOutreachEmail(lead.contactName, lead.companyName, emailBody));
+      const existingSeq = await blink.db.outreachSequences.list({ where: { leadId }, limit: 1 }) as any[];
+      if (existingSeq.length === 0) {
+        await blink.db.outreachSequences.create({ id: seqId, leadId, step: 1, status: "sent", emailSentAt: new Date().toISOString(), lastSentAt: new Date().toISOString() });
+      } else {
+        await blink.db.outreachSequences.update(existingSeq[0].id, { step: Math.min((existingSeq[0].step || 1) + 1, 5), lastSentAt: new Date().toISOString() });
       }
-
+      await blink.db.outreachAnalytics.create({ id: crypto.randomUUID(), sequenceId: seqId, leadId, step: 1, eventType: "sent", metadata: JSON.stringify({ channel: "email", via: "resend" }) });
+      let emailSent = false;
+      if (lead.contactEmail && resendKey) {
+        await updateRun("running", 75, `Sending via Resend to ${lead.contactEmail}...`);
+        emailSent = await sendEmail(resendKey, lead.contactEmail, `Preview site ready for ${lead.companyName}`, buildOutreachEmail(lead.contactName, lead.companyName, emailBody));
+      }
       await blink.db.leads.update(leadId, { status: "outreach_sent" });
-      await updateRun("success", 100, `Step 1 sent${emailSent ? " via SendGrid" : " (queued)"}. 48h window active.`);
+      await updateRun("success", 100, `Outreach sent for ${lead.companyName}. Email${emailSent ? " delivered via Resend" : lead.contactEmail ? " queued (no Resend key)" : " skipped (no email on file)"}.`);
       return;
     }
 
+    // ─── Qualifying Agent ─────────────────────────────────────────────────────
+    if (agentName === "Qualifying") {
+      await updateRun("running", 20, "Scanning pipeline for leads ready to advance...");
+      const threshold = 60;
+      const outreachLeads = await blink.db.leads.list({ where: { status: "outreach_sent" }, limit: 50 }) as any[];
+      let promoted = 0, expired = 0;
+      for (const lead of outreachLeads) {
+        const scores = await blink.db.leadScores.list({ where: { leadId: lead.id }, limit: 1 }) as any[];
+        const score = scores[0]?.overallScore || lead.leadScore || 0;
+        const replyEvents = await blink.db.outreachAnalytics.list({ where: { leadId: lead.id, eventType: "replied" }, limit: 1 }) as any[];
+        const daysSince = (Date.now() - new Date(lead.updatedAt || lead.createdAt).getTime()) / 86400000;
+        if (replyEvents.length > 0) { await blink.db.leads.update(lead.id, { status: "responded" }); promoted++; }
+        else if (score >= threshold && daysSince < 7) { await blink.db.leads.update(lead.id, { status: "qualified" }); promoted++; }
+        else if (daysSince > 14) { await blink.db.leads.update(lead.id, { status: "lost" }); expired++; }
+      }
+      const respondedLeads = await blink.db.leads.list({ where: { status: "responded" }, limit: 50 }) as any[];
+      for (const lead of respondedLeads) {
+        const scores = await blink.db.leadScores.list({ where: { leadId: lead.id }, limit: 1 }) as any[];
+        if ((scores[0]?.overallScore || 0) >= threshold) { await blink.db.leads.update(lead.id, { status: "proposal" }); promoted++; }
+      }
+      await updateRun("success", 100, `Qualifying complete: ${promoted} advanced, ${expired} expired. Threshold: ${threshold}/100.`);
+      return;
+    }
+
+    // ─── Invoicing ────────────────────────────────────────────────────────────
     if (agentName === "Invoicing") {
       if (!leadId) throw new Error("leadId required");
-      await updateRun("running", 50, "Creating Growth Package invoice ($4,997)...");
-      await sleep(600);
+      const existing = await blink.db.invoices.list({ where: { leadId }, limit: 1 }) as any[];
+      if (existing.length > 0) { await updateRun("success", 100, "Invoice already exists for this lead."); return; }
       const invoiceId = crypto.randomUUID();
-      await blink.db.invoices.create({ id: invoiceId, leadId, amount: 4997.0, status: "open",
-        stripeInvoiceId: `inv_${crypto.randomUUID().slice(0, 12)}` });
-      await blink.db.invoiceReminders.create({ id: crypto.randomUUID(), invoiceId,
-        reminderType: "initial", status: "pending", escalationLevel: 1 });
+      await blink.db.invoices.create({ id: invoiceId, leadId, amount: 4997, status: "open", stripeInvoiceId: `inv_${crypto.randomUUID().slice(0, 12)}` });
+      await blink.db.invoiceReminders.create({ id: crypto.randomUUID(), invoiceId, reminderType: "initial", status: "pending", escalationLevel: 1 });
       await blink.db.leads.update(leadId, { status: "proposal" });
       await updateRun("success", 100, "Invoice for $4,997 created + reminder automation armed.");
       return;
     }
 
+    // ─── Repurposing ──────────────────────────────────────────────────────────
     if (agentName === "Repurposing") {
       if (!leadId) throw new Error("leadId required");
-      await updateRun("running", 80, "Repurposing assets for next prospect...");
-      await sleep(600);
       await blink.db.leads.update(leadId, { status: "lost" });
-      await updateRun("success", 100, "Assets queued for next qualified prospect.");
+      await updateRun("success", 100, "Lead marked lost. Assets freed for repurposing.");
       return;
     }
 
-    if (agentName === "Coordinator" || agentName === "Full Pipeline") {
-      await runFullPipeline(blink, updateRun, openaiKey, sgKey);
-    } else {
-      await updateRun("success", 100, `${agentName} executed successfully.`);
+    // ─── Full Pipeline ────────────────────────────────────────────────────────
+    if (agentName === "Full Pipeline" || agentName === "Coordinator") {
+      const niche = body.niche || "commercial bridge lender";
+      const location = body.location || "Southern California";
+      await runFullPipeline(blink, updateRun, openaiKey, resendKey, mapsKey, niche, location);
+      return;
     }
+
+    await updateRun("success", 100, `${agentName} executed.`);
   } catch (error: any) {
     console.error("Orchestration error:", error);
-    try {
-      const b2 = createClient({ projectId: env.BLINK_PROJECT_ID, secretKey: env.BLINK_SECRET_KEY });
-      await b2.db.agentRuns.update(runId, { status: "failed", progressPercent: 0,
-        logsText: `Error: ${error.message}`, finishedAt: new Date().toISOString() });
-    } catch (e) { console.error("Failed to update run:", e); }
+    try { const b2 = createClient({ projectId: env.BLINK_PROJECT_ID, secretKey: env.BLINK_SECRET_KEY }); await b2.db.agentRuns.update(runId, { status: "failed", progressPercent: 0, logsText: `Error: ${error.message}`, finishedAt: new Date().toISOString() }); } catch {}
   }
 }
 
-async function runFullPipeline(blink: any, updateRun: Function, openaiKey: string, sgKey: string) {
+async function runFullPipeline(blink: any, updateRun: Function, openaiKey: string, resendKey: string, mapsKey: string, niche: string, location: string) {
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-  await updateRun("running", 8, "Stage 1: Scanning SoCal directories...");
-  await sleep(1000);
-
-  const ts = Date.now();
-  const seeds = [
-    { n: "Apex Commercial Capital", e: "loans@apex.com", c: "Robert Martinez", l: "Los Angeles, CA" },
-    { n: "Coastal Bridge Funding", e: "contact@coastal.com", c: "Amanda Torres", l: "San Diego, CA" },
-    { n: "SoCal Bridge Lenders", e: "hello@socalbridge.com", c: "Daniel Kim", l: "Irvine, CA" },
-  ];
-
-  const newLeads = seeds.map(co => ({
-    id: crypto.randomUUID(), companyName: `${co.n} ${ts}`.slice(0, 50),
-    website: `https://${co.n.toLowerCase().replace(/\s/g, "")}.com`,
-    contactEmail: co.e, contactName: co.c, source: "Google Maps",
-    niche: "Commercial Bridge Lender", location: co.l, status: "new", consentObtained: 1,
-  }));
-
-  for (const lead of newLeads) await blink.db.leads.create(lead);
-  await updateRun("running", 25, `Discovered ${newLeads.length} prospects.`);
-  await sleep(600);
-
-  await updateRun("running", 40, "Stage 2: AI lead scoring...");
-  for (const lead of newLeads) {
-    const score = 72 + Math.floor(Math.random() * 23);
-    await blink.db.leadScores.create({ id: crypto.randomUUID(), leadId: lead.id, overallScore: score,
-      conversionLikelihood: 68 + Math.floor(Math.random() * 25), potentialServicesValue: 4997.0,
-      searchActivityScore: 55 + Math.floor(Math.random() * 30), paidAdsActivity: 25 + Math.floor(Math.random() * 35) });
-    await blink.db.leads.update(lead.id, { status: "scored" });
+  // Stage 1: Discovery
+  await updateRun("running", 8, `Stage 1: Google Maps — "${niche}" in "${location}"...`);
+  const places = await discoverLeadsFromMaps(mapsKey, niche, location, 5);
+  if (places.length === 0) { await updateRun("failed", 0, `No Google Maps results for "${niche}" in "${location}".`); return; }
+  const newLeads: any[] = [];
+  for (const place of places) {
+    const existing = await blink.db.leads.list({ where: { companyName: place.companyName }, limit: 1 }) as any[];
+    if (existing.length > 0) continue;
+    const { overallScore } = scoreLeadFromPresence(place);
+    const id = crypto.randomUUID();
+    await blink.db.leads.create({ id, companyName: place.companyName, website: place.website || "", phone: place.phone || "", contactEmail: "", contactName: "", source: "Google Maps API", niche, location: place.address || location, status: "new", leadScore: overallScore, consentObtained: 1 });
+    newLeads.push({ ...place, id, leadScore: overallScore });
   }
-  await sleep(600);
-
-  await updateRun("running", 55, "Stage 3: Generating AI assets via OpenAI...");
+  if (newLeads.length === 0) { await updateRun("success", 100, `All ${places.length} businesses already in pipeline. No new leads.`); return; }
+  await updateRun("running", 22, `Discovered ${newLeads.length} new leads. Scoring...`);
+  // Stage 2: Scoring
   for (const lead of newLeads) {
-    const audit = await generateAIContent(openaiKey, `Write 2-sentence SEO audit for ${lead.companyName} bridge lender in ${lead.location}. Mention key gaps.`);
-    const copy = await generateAIContent(openaiKey, `Write a 10-word hero headline for ${lead.companyName} bridge lender website.`);
-    await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId: lead.id, type: "audit_report",
-      hostedUrl: `https://agentorch.io/audit/${lead.id}`, content: audit });
-    await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId: lead.id, type: "custom_website",
-      hostedUrl: `https://preview-${lead.id.slice(0, 8)}.agentorch.site`, content: copy });
+    const { overallScore, conversionLikelihood, searchActivityScore, paidAdsActivity } = scoreLeadFromPresence(lead);
+    await blink.db.leadScores.create({ id: crypto.randomUUID(), leadId: lead.id, overallScore, conversionLikelihood, searchActivityScore, paidAdsActivity, potentialServicesValue: 4997 });
+    await blink.db.leads.update(lead.id, { status: "scored", leadScore: overallScore });
+  }
+  await updateRun("running", 42, "Stage 3: Generating AI audit reports via OpenAI...");
+  // Stage 3: Assets
+  for (const lead of newLeads) {
+    const audit = await generateAIContent(openaiKey, `Write a 3-sentence SEO audit for ${lead.companyName} (${niche} in ${lead.address || location}). ${!lead.website ? "No website detected." : "Website: " + lead.website}. Be specific and professional.`);
+    await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId: lead.id, type: "audit_report", hostedUrl: `https://agentorch.io/audit/${lead.id}`, content: audit });
+    const copy = await generateAIContent(openaiKey, `Write a 10-word hero headline for ${lead.companyName} (${niche} in ${lead.address || location}).`);
+    await blink.db.generatedAssets.create({ id: crypto.randomUUID(), leadId: lead.id, type: "custom_website", hostedUrl: `https://preview-${lead.id.slice(0, 8)}.agentorch.site`, content: copy });
     await blink.db.leads.update(lead.id, { status: "audited" });
   }
-  await sleep(600);
-
-  await updateRun("running", 70, "Stage 4: Deploying outreach sequences...");
+  await updateRun("running", 68, "Stage 4: Creating outreach sequences...");
+  // Stage 4: Outreach
   for (const lead of newLeads) {
     const seqId = crypto.randomUUID();
-    await blink.db.outreachSequences.create({ id: seqId, leadId: lead.id, step: 1, status: "sent",
-      emailSentAt: new Date().toISOString(), lastSentAt: new Date().toISOString() });
-    await blink.db.outreachAnalytics.create({ id: crypto.randomUUID(), sequenceId: seqId, leadId: lead.id,
-      step: 1, eventType: "sent", metadata: JSON.stringify({ automated: true }) });
+    await blink.db.outreachSequences.create({ id: seqId, leadId: lead.id, step: 1, status: "sent", emailSentAt: new Date().toISOString(), lastSentAt: new Date().toISOString() });
+    await blink.db.outreachAnalytics.create({ id: crypto.randomUUID(), sequenceId: seqId, leadId: lead.id, step: 1, eventType: "sent", metadata: JSON.stringify({ automated: true }) });
     await blink.db.leads.update(lead.id, { status: "outreach_sent" });
   }
-  await sleep(600);
-
-  await updateRun("running", 85, "Stage 5: Reply detected! Creating invoice...");
-  await sleep(800);
-
-  const winLead = newLeads[0];
-  const invoiceId = crypto.randomUUID();
-  await blink.db.invoices.create({ id: invoiceId, leadId: winLead.id, amount: 4997.0, status: "paid",
-    stripeInvoiceId: `inv_demo_${crypto.randomUUID().slice(0, 8)}` });
-  await blink.db.leads.update(winLead.id, { status: "client" });
-  await blink.db.outreachAnalytics.create({ id: crypto.randomUUID(),
-    sequenceId: `seq_${winLead.id.slice(0, 8)}`, leadId: winLead.id, step: 1,
-    eventType: "replied", metadata: JSON.stringify({ revenue: 4997 }) });
-
-  await updateRun("success", 100, `Full cycle: ${newLeads.length} discovered → AI-audited → outreach sent → 1 client ($4,997).`);
+  await updateRun("running", 85, "Stage 5: Qualifying Agent reviewing...");
+  // Stage 5: Qualify high-scorers
+  let qualified = 0;
+  for (const lead of newLeads) {
+    if ((lead.leadScore || 0) >= 60) { await blink.db.leads.update(lead.id, { status: "qualified" }); qualified++; }
+  }
+  await updateRun("success", 100, `Full pipeline: ${newLeads.length} discovered → scored → AI-audited → outreach created → ${qualified} auto-qualified. Niche: "${niche}", Location: "${location}".`);
 }
