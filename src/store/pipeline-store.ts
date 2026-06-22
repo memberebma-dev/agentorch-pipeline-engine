@@ -128,17 +128,23 @@ export function usePipelineStats() {
         totalQualified,
         totalClients,
         totalOutreach,
-        paidInvoices
+        paidInvoices,
+        allScores
       ] = await Promise.all([
         blink.db.leads.count(),
         blink.db.leads.count({ where: { status: 'qualified' } }),
         blink.db.leads.count({ where: { status: 'client' } }),
         blink.db.outreachSequences.count(),
-        blink.db.invoices.list({ where: { status: 'paid' } })
+        blink.db.invoices.list({ where: { status: 'paid' } }),
+        blink.db.leadScores.list({ limit: 500 })
       ])
 
       const responseCount = await blink.db.leads.count({ where: { status: 'responded' } })
-      const passiveRevenue = (paidInvoices as Invoice[]).reduce((sum, inv) => sum + inv.amount, 0)
+      const passiveRevenue = (paidInvoices as Invoice[]).reduce((sum, inv) => sum + Number(inv.amount), 0)
+      const scores = (allScores as LeadScore[])
+      const avgLeadScore = scores.length > 0
+        ? Math.round(scores.reduce((sum, s) => sum + Number(s.overallScore), 0) / scores.length)
+        : 0
 
       return {
         totalLeads,
@@ -149,7 +155,8 @@ export function usePipelineStats() {
         totalClients,
         responseRate: totalOutreach > 0 ? (responseCount / totalOutreach) * 100 : 0,
         conversionRate: totalLeads > 0 ? (totalClients / totalLeads) * 100 : 0,
-        passiveRevenue
+        passiveRevenue,
+        avgLeadScore
       } as PipelineStats
     },
     staleTime: 30000,
